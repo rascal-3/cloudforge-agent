@@ -1,0 +1,45 @@
+{
+  "name": "cloudforge-agent",
+  "version": "0.1.0",
+  "description": "CloudForge Agent - Connect your server to CloudForge",
+  "type": "module",
+  "main": "dist/index.js",
+  "files": ["dist", "README.md", "LICENSE"],
+  "bin": {
+    "cloudforge-agent": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "cloudforge",
+    "agent",
+    "remote",
+    "terminal",
+    "ssh"
+  ],
+  "author": "CloudForge",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rascal-3/cloudforge-agent"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5",
+    "node-pty": "^1.0.0",
+    "socket.io-client": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.5.0"
+  }
+}
