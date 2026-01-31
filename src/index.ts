@@ -6,11 +6,37 @@
 
 import { Command } from 'commander'
 import chalk from 'chalk'
+import { createRequire } from 'module'
+import { chmodSync, statSync } from 'fs'
+import { join, dirname } from 'path'
 import { createConfig, VERSION, getSystemInfo } from './config.js'
 import { WebSocketManager } from './websocket.js'
 import { TerminalManager } from './terminal.js'
 import { FileManager } from './files.js'
 import { GitManager } from './git.js'
+
+/**
+ * Fix node-pty spawn-helper permissions.
+ * When installed via npx, the spawn-helper binary may lack execute permission.
+ */
+function fixNodePtyPermissions(): void {
+  try {
+    const require = createRequire(import.meta.url)
+    const ptyPath = dirname(require.resolve('node-pty'))
+    const platform = process.platform === 'darwin' ? 'darwin' : process.platform === 'linux' ? 'linux' : null
+    const arch = process.arch
+    if (!platform) return
+    const helperPath = join(ptyPath, 'prebuilds', `${platform}-${arch}`, 'spawn-helper')
+    const stat = statSync(helperPath, { throwIfNoEntry: false })
+    if (stat && !(stat.mode & 0o111)) {
+      chmodSync(helperPath, stat.mode | 0o755)
+    }
+  } catch {
+    // Ignore - will fail naturally when spawning terminal if still broken
+  }
+}
+
+fixNodePtyPermissions()
 
 const program = new Command()
 
