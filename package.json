@@ -4,9 +4,13 @@
   "description": "CloudForge Agent - Connect your server to CloudForge",
   "type": "module",
   "main": "dist/index.js",
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
-    "cloudforge-agent": "./dist/index.js"
+    "cloudforge-agent": "dist/index.js"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -25,7 +29,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/rascal-3/cloudforge-agent"
+    "url": "git+https://github.com/rascal-3/cloudforge-agent.git"
   },
   "engines": {
     "node": ">=18.0.0"
