@@ -1,6 +1,6 @@
 {
   "name": "cloudforge-agent",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "CloudForge Agent - Connect your server to CloudForge",
   "type": "module",
   "main": "dist/index.js",
