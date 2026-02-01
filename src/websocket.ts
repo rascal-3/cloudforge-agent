@@ -109,6 +109,9 @@ export class WebSocketManager {
 
       // Git events from server
       this.setupGitHandlers()
+
+      // Auth events from server
+      this.setupAuthHandlers()
     })
   }
 
@@ -842,6 +845,86 @@ export class WebSocketManager {
           error: err instanceof Error ? err.message : String(err),
         })
       }
+    })
+  }
+
+  /**
+   * Setup auth deployment handlers
+   */
+  private setupAuthHandlers(): void {
+    if (!this.socket) return
+
+    // Deploy auth (write env file)
+    this.socket.on('auth:deploy', async (msg: {
+      provider: string
+      envVarName: string
+      envVarValue: string
+    }) => {
+      console.log(chalk.cyan(`Auth deploy request: ${msg.provider}`))
+
+      try {
+        const homeDir = os.homedir()
+        const envDir = `${homeDir}/.cloudforge/env`
+        const envFile = `${envDir}/${msg.provider}.env`
+        const content = `export ${msg.envVarName}="${msg.envVarValue}"\n`
+
+        // Create directory
+        const fs = await import('fs/promises')
+        await fs.mkdir(envDir, { recursive: true })
+
+        // Write env file
+        await fs.writeFile(envFile, content, { mode: 0o600 })
+
+        // Add source line to shell profiles if not present
+        const sourceLine = `[ -f "${envFile}" ] && source "${envFile}"`
+        const profiles = ['.bashrc', '.zshrc', '.profile']
+        for (const profile of profiles) {
+          const profilePath = `${homeDir}/${profile}`
+          try {
+            const existing = await fs.readFile(profilePath, 'utf8')
+            if (!existing.includes(envFile)) {
+              await fs.appendFile(profilePath, `\n# CloudForge AI Auth (${msg.provider})\n${sourceLine}\n`)
+            }
+          } catch {
+            // Profile doesn't exist, skip
+          }
+        }
+
+        console.log(chalk.green(`Auth deployed: ${msg.provider} → ${envFile}`))
+        this.socket?.emit('auth:deploy:response', {
+          success: true,
+          provider: msg.provider,
+        })
+      } catch (err) {
+        console.error(chalk.red('Auth deploy error:'), err)
+        this.socket?.emit('auth:deploy:response', {
+          success: false,
+          provider: msg.provider,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })
+
+    // Check auth status
+    this.socket.on('auth:status', async (msg: { providers: string[] }) => {
+      const homeDir = os.homedir()
+      const deployed: Record<string, boolean> = {}
+
+      const fs = await import('fs/promises')
+      for (const provider of msg.providers) {
+        const envFile = `${homeDir}/.cloudforge/env/${provider}.env`
+        try {
+          await fs.access(envFile)
+          deployed[provider] = true
+        } catch {
+          deployed[provider] = false
+        }
+      }
+
+      this.socket?.emit('auth:status:response', {
+        success: true,
+        deployed,
+      })
     })
   }
 
