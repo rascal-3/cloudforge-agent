@@ -125,6 +125,7 @@ export class WebSocketManager {
       cols?: number
       rows?: number
       cwd?: string
+      idleTimeoutMs?: number
     }) => {
       if (this.config.debug) {
         console.log(chalk.gray(`Terminal spawn request: ${msg.sessionId}`))
@@ -146,7 +147,8 @@ export class WebSocketManager {
           msg.shell || this.config.shell,
           msg.cols || 80,
           msg.rows || 24,
-          cwd
+          cwd,
+          msg.idleTimeoutMs
         )
 
         // Forward output to server
@@ -225,6 +227,73 @@ export class WebSocketManager {
           sessionId: msg.sessionId,
           cwd,
         })
+      }
+    })
+
+    // Detach terminal session (keep PTY alive)
+    this.socket.on('terminal:detach', (msg: {
+      sessionId: string
+    }) => {
+      if (this.config.debug) {
+        console.log(chalk.gray(`Terminal detach request: ${msg.sessionId}`))
+      }
+      this.terminalManager.detach(msg.sessionId)
+    })
+
+    // List existing sessions
+    this.socket.on('terminal:list-sessions', () => {
+      if (this.config.debug) {
+        console.log(chalk.gray('Terminal list-sessions request'))
+      }
+      const sessions = this.terminalManager.listSessions()
+      this.socket?.emit('terminal:sessions-list', {
+        type: 'terminal:sessions-list',
+        sessions,
+      })
+    })
+
+    // Reattach to existing session
+    this.socket.on('terminal:reattach', (msg: {
+      sessionId: string
+      cols?: number
+      rows?: number
+    }) => {
+      if (this.config.debug) {
+        console.log(chalk.gray(`Terminal reattach request: ${msg.sessionId}`))
+      }
+
+      const result = this.terminalManager.reattach(msg.sessionId)
+      if (!result) {
+        this.socket?.emit('terminal:error', {
+          type: 'terminal:error',
+          sessionId: msg.sessionId,
+          error: 'Session not found',
+        })
+        return
+      }
+
+      // Send scrollback buffer
+      this.socket?.emit('terminal:scrollback', {
+        type: 'terminal:scrollback',
+        sessionId: msg.sessionId,
+        data: result.scrollback,
+      })
+
+      // Re-register output forwarding
+      const session = this.terminalManager.get(msg.sessionId)
+      if (session) {
+        session.onData((data) => {
+          this.socket?.emit('terminal:output', {
+            type: 'terminal:output',
+            sessionId: msg.sessionId,
+            data,
+          })
+        })
+
+        // Resize if dimensions changed
+        if (msg.cols && msg.rows) {
+          session.resize(msg.cols, msg.rows)
+        }
       }
     })
   }

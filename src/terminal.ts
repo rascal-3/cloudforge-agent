@@ -1,6 +1,6 @@
 /**
  * CloudForge Agent Terminal Manager
- * Manages PTY terminal sessions
+ * Manages PTY terminal sessions with scrollback buffer and detach/reattach support
  */
 
 import pty, { type IPty } from 'node-pty'
@@ -12,28 +12,85 @@ import type { AgentConfig } from './config.js'
 
 const execAsync = promisify(exec)
 
+/**
+ * Ring buffer for terminal scrollback
+ */
+export class ScrollbackBuffer {
+  private buffer: string[] = []
+  private totalSize = 0
+  private maxSize: number
+
+  constructor(maxSize = 100 * 1024) { // 100KB default
+    this.maxSize = maxSize
+  }
+
+  write(data: string): void {
+    this.buffer.push(data)
+    this.totalSize += data.length
+
+    // Trim from front if over limit
+    while (this.totalSize > this.maxSize && this.buffer.length > 1) {
+      const removed = this.buffer.shift()!
+      this.totalSize -= removed.length
+    }
+  }
+
+  getContents(): string {
+    return this.buffer.join('')
+  }
+
+  clear(): void {
+    this.buffer = []
+    this.totalSize = 0
+  }
+}
+
+export type SessionState = 'attached' | 'detached'
+
+export interface SessionInfo {
+  sessionId: string
+  state: SessionState
+  shell: string
+  cols: number
+  rows: number
+  createdAt: number
+  detachedAt: number | null
+}
+
 export interface TerminalSession {
   pty: IPty
   sessionId: string
+  state: SessionState
+  scrollback: ScrollbackBuffer
+  createdAt: number
+  detachedAt: number | null
+  shell: string
+  cols: number
+  rows: number
+  idleTimeoutMs: number
   onData: (callback: (data: string) => void) => void
   onExit: (callback: (exitCode: number) => void) => void
   write: (data: string) => void
   resize: (cols: number, rows: number) => void
   kill: () => void
+  clearDataCallbacks: () => void
 }
 
 export class TerminalManager {
   private sessions = new Map<string, TerminalSession>()
   private config: AgentConfig
+  private idleCheckInterval: ReturnType<typeof setInterval> | null = null
 
   constructor(config: AgentConfig) {
     this.config = config
+    // Check for idle detached sessions every 60s
+    this.idleCheckInterval = setInterval(() => this.cleanupIdleSessions(), 60_000)
   }
 
   /**
    * Spawn a new terminal session
    */
-  spawn(sessionId: string, shell: string, cols: number, rows: number, cwd?: string): TerminalSession {
+  spawn(sessionId: string, shell: string, cols: number, rows: number, cwd?: string, idleTimeoutMs?: number): TerminalSession {
     if (this.sessions.has(sessionId)) {
       throw new Error(`Session ${sessionId} already exists`)
     }
@@ -59,9 +116,12 @@ export class TerminalManager {
     // Event callbacks
     const dataCallbacks: ((data: string) => void)[] = []
     const exitCallbacks: ((exitCode: number) => void)[] = []
+    const scrollback = new ScrollbackBuffer()
 
     // Handle data from PTY
     ptyProcess.onData((data) => {
+      // Always write to scrollback regardless of attached state
+      scrollback.write(data)
       for (const callback of dataCallbacks) {
         callback(data)
       }
@@ -81,6 +141,14 @@ export class TerminalManager {
     const session: TerminalSession = {
       pty: ptyProcess,
       sessionId,
+      state: 'attached',
+      scrollback,
+      createdAt: Date.now(),
+      detachedAt: null,
+      shell,
+      cols,
+      rows,
+      idleTimeoutMs: idleTimeoutMs || 0,
       onData: (callback) => {
         dataCallbacks.push(callback)
       },
@@ -94,6 +162,8 @@ export class TerminalManager {
         if (this.config.debug) {
           console.log(chalk.gray(`Terminal resize: ${sessionId}, ${cols}x${rows}`))
         }
+        session.cols = cols
+        session.rows = rows
         ptyProcess.resize(cols, rows)
       },
       kill: () => {
@@ -102,10 +172,86 @@ export class TerminalManager {
         }
         ptyProcess.kill()
       },
+      clearDataCallbacks: () => {
+        dataCallbacks.length = 0
+      },
     }
 
     this.sessions.set(sessionId, session)
     return session
+  }
+
+  /**
+   * Detach a session (keep PTY alive, stop forwarding output)
+   */
+  detach(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId)
+    if (!session) return false
+
+    if (this.config.debug) {
+      console.log(chalk.gray(`Terminal detach: ${sessionId}`))
+    }
+
+    session.state = 'detached'
+    session.detachedAt = Date.now()
+    session.clearDataCallbacks()
+    return true
+  }
+
+  /**
+   * Reattach to a detached session. Returns scrollback contents.
+   */
+  reattach(sessionId: string): { scrollback: string } | null {
+    const session = this.sessions.get(sessionId)
+    if (!session) return null
+
+    if (this.config.debug) {
+      console.log(chalk.gray(`Terminal reattach: ${sessionId}`))
+    }
+
+    session.state = 'attached'
+    session.detachedAt = null
+    return { scrollback: session.scrollback.getContents() }
+  }
+
+  /**
+   * List all sessions with their info
+   */
+  listSessions(): SessionInfo[] {
+    const result: SessionInfo[] = []
+    for (const session of this.sessions.values()) {
+      result.push({
+        sessionId: session.sessionId,
+        state: session.state,
+        shell: session.shell,
+        cols: session.cols,
+        rows: session.rows,
+        createdAt: session.createdAt,
+        detachedAt: session.detachedAt,
+      })
+    }
+    return result
+  }
+
+  /**
+   * Cleanup idle detached sessions
+   */
+  private cleanupIdleSessions(): void {
+    const now = Date.now()
+    for (const [sessionId, session] of this.sessions) {
+      if (
+        session.state === 'detached' &&
+        session.idleTimeoutMs > 0 &&
+        session.detachedAt &&
+        now - session.detachedAt > session.idleTimeoutMs
+      ) {
+        if (this.config.debug) {
+          console.log(chalk.gray(`Idle timeout, killing: ${sessionId}`))
+        }
+        session.kill()
+        this.sessions.delete(sessionId)
+      }
+    }
   }
 
   /**
@@ -153,6 +299,17 @@ export class TerminalManager {
       session.kill()
     }
     this.sessions.clear()
+  }
+
+  /**
+   * Destroy the manager (cleanup interval)
+   */
+  destroy(): void {
+    if (this.idleCheckInterval) {
+      clearInterval(this.idleCheckInterval)
+      this.idleCheckInterval = null
+    }
+    this.killAll()
   }
 
   /**
