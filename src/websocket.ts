@@ -291,9 +291,10 @@ export class WebSocketManager {
         data: result.scrollback,
       })
 
-      // Re-register output forwarding
+      // Re-register output forwarding (clear old callbacks first to prevent double echo)
       const session = this.terminalManager.get(msg.sessionId)
       if (session) {
+        session.clearDataCallbacks()
         session.onData((data) => {
           this.socket?.emit('terminal:output', {
             type: 'terminal:output',
