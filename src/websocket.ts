@@ -81,8 +81,10 @@ export class WebSocketManager {
         // Socket.IO auto-reconnects for transport-level disconnects only.
         // For namespace-level disconnects (server or client initiated),
         // we must manually reconnect.
-        if (reason === 'io server disconnect' || reason === 'client namespace disconnect') {
-          const delay = reason === 'client namespace disconnect' ? 2000 : 1000
+        // Note: "io client disconnect" = client called disconnect (server sees "client namespace disconnect")
+        //       "io server disconnect" = server called disconnect (server sees "server namespace disconnect")
+        if (reason === 'io server disconnect' || reason === 'io client disconnect') {
+          const delay = reason === 'io client disconnect' ? 2000 : 1000
           console.log(chalk.yellow(`Reconnecting in ${delay}ms...`))
           setTimeout(() => {
             if (!this.isConnected && this.socket) {
