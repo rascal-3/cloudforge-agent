@@ -39,12 +39,12 @@ export class WebSocketManager {
         auth: {
           token: this.config.token,
         },
-        transports: ['websocket', 'polling'],
+        transports: ['websocket'],
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: this.config.reconnectDelay,
         reconnectionDelayMax: this.config.maxReconnectDelay,
-        timeout: 20000,
+        timeout: 60000,
       })
 
       // Connection events
@@ -78,10 +78,17 @@ export class WebSocketManager {
         this.stopHeartbeat()
         console.log(chalk.yellow('Disconnected:'), reason)
 
-        if (reason === 'io server disconnect') {
-          // Server disconnected us, try to reconnect
-          console.log(chalk.yellow('Server disconnected. Reconnecting...'))
-          this.socket?.connect()
+        // Socket.IO auto-reconnects for transport-level disconnects only.
+        // For namespace-level disconnects (server or client initiated),
+        // we must manually reconnect.
+        if (reason === 'io server disconnect' || reason === 'client namespace disconnect') {
+          const delay = reason === 'client namespace disconnect' ? 2000 : 1000
+          console.log(chalk.yellow(`Reconnecting in ${delay}ms...`))
+          setTimeout(() => {
+            if (!this.isConnected && this.socket) {
+              this.socket.connect()
+            }
+          }, delay)
         }
       })
 
